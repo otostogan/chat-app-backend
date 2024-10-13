@@ -9,38 +9,49 @@ import { Server, Socket } from 'socket.io';
 import { PrismaService } from './prisma.service';
 
 interface User {
-  id: string; // Unique identifier for the user, can be username or client ID
+  id: string;
   username: string;
 }
 
 @WebSocketGateway({ cors: true })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
-  private activeUsers: User[] = []; // Array to keep track of active users
+  private activeUsers: User[] = [];
 
   constructor(private prisma: PrismaService) {}
 
   async handleConnection(client: Socket) {
-    const username = client.handshake.query.username as string; // Get username from query
+    console.log(client.handshake);
+    const username = client.handshake.query.username as string;
     this.activeUsers.push({ id: client.id, username });
 
-    // Notify all clients of the updated active users
     this.server.emit('activeUsers', this.activeUsers);
 
-    // Fetch message history and send it to the new client
     const messages = await this.prisma.message.findMany({
       include: { user: true },
       orderBy: { createdAt: 'asc' },
     });
     client.emit('history', messages);
+
+    this.server.emit('message', {
+      user: { username: username },
+      content: `${username} has joined the chat!`,
+    });
   }
 
   async handleDisconnect(client: Socket) {
-    // Remove user from active users list
-    this.activeUsers = this.activeUsers.filter((user) => user.id !== client.id);
+    const user = this.activeUsers.find((user) => user.id === client.id);
+    console.log(this.activeUsers);
+    if (user) {
+      this.activeUsers = this.activeUsers.filter((u) => u.id !== client.id);
 
-    // Notify all clients of the updated active users
-    this.server.emit('activeUsers', this.activeUsers);
+      this.server.emit('activeUsers', this.activeUsers);
+
+      this.server.emit('message', {
+        user: { username: user.username },
+        content: `${user.username} has left the chat.`,
+      });
+    }
   }
 
   @SubscribeMessage('message')
@@ -60,6 +71,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       },
       include: { user: true },
     });
-    this.server.emit('message', newMessage); // Broadcast new message to all clients
+    this.server.emit('message', newMessage);
   }
 }
